@@ -120,7 +120,6 @@ while True:
         cv2.circle(frame, current_line[0], 5, (0, 0, 255), -1)
     elif typing_name and len(current_line) == 2:
         cv2.line(frame, current_line[0], current_line[1], (0, 255, 255), 2)
-        # Draw current name being typed
         cv2.putText(frame, current_name, (mid_point[0]-40, mid_point[1]-10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
 
     # Draw labels
@@ -152,3 +151,11 @@ while True:
 
 cap.release()
 cv2.destroyAllWindows()
+
+# ========== Final Note / Report ==========
+
+print("\n=== Vehicle Count Summary ===")
+for i, (lp1, lp2, direction, name) in enumerate(lines):
+    print(f"Line '{name}' ({direction}) : {counts_per_line[i]} vehicles")
+
+print("================================\n")
