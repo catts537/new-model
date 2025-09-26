@@ -24,15 +24,15 @@ tracker = DeepSort(max_age=30, max_cosine_distance=0.2, nn_budget=100)
 # ========================
 # Classes to track
 # ========================
-vehicle_classes = [0, 1, 2, 3, 5, 7]
+vehicle_classes = [1, 2, 3, 5, 7]
 vehicle_class_names = {
-    0: 'Person', 1: 'Bicycle', 2: 'Car', 3: 'Motorcycle', 5: 'Bus', 7: 'Truck'
+    1: 'Bicycle', 2: 'Car', 3: 'Motorcycle', 5: 'Bus', 7: 'Truck'
 }
 
 # ========================
 # Video input
 # ========================
-video_path = 's.mp4'
+video_path = '0926.mp4'
 cap = cv2.VideoCapture(video_path)
 
 # ========================
@@ -102,11 +102,11 @@ while True:
     if frame_counter % skip_rate != 0: continue
 
     # Convert frame to torch tensor and move to GPU
-    img_tensor = torch.from_numpy(frame).permute(2,0,1).float().to(device) / 255.0
-    img_tensor = img_tensor.unsqueeze(0)  # add batch dimension
-
-    # Run YOLO
+    img_resized = cv2.resize(frame, (1920, 1088))  # or (1280, 1280)
+    img_tensor = torch.from_numpy(img_resized).permute(2,0,1).float().to(device) / 255.0
+    img_tensor = img_tensor.unsqueeze(0)
     results = model(img_tensor, device=device, verbose=False)[0]
+
 
     boxes = []
     confidences = []
