@@ -1,0 +1,28 @@
+resultion conversion:
+
+
+📺 Standard Resolutions → YOLO-Compatible
+
+1920×1080 → 1920×1088
+
+1280×720 → 1280×736
+
+640×360 → 640×352
+
+🖥️ Higher Resolutions
+
+2560×1440 (2K) → 2560×1440 ✅ (already divisible by 32)
+
+3840×2160 (4K UHD) → 3840×2176
+
+7680×4320 (8K UHD) → 7680×4320 ✅ (already divisible by 32)
+
+📱 Other Common Ratios
+
+1366×768 → 1376×768
+
+1600×900 → 1600×896
+
+1024×768 → 1024×768 ✅
+
+854×480 → 864×480
