@@ -11,7 +11,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
 # ========================
-# Load YOLOv8 model (to GPU)
+# Load YOLOv8 model
 # ========================
 model = YOLO('yolov8s.pt')   # yolov8s = good balance of speed + accuracy
 model.to(device)
@@ -22,7 +22,7 @@ model.to(device)
 tracker = DeepSort(max_age=20, max_cosine_distance=0.2, nn_budget=50)
 
 # ========================
-# Classes to track (COCO IDs)
+# Vehicle classes (COCO)
 # ========================
 vehicle_classes = [1, 2, 3, 5, 7]  # Bicycle, Car, Motorcycle, Bus, Truck
 vehicle_class_names = {
@@ -36,7 +36,7 @@ video_path = 's.mp4'
 cap = cv2.VideoCapture(video_path)
 
 # ========================
-# Lines & counting
+# Line drawing & counting
 # ========================
 lines = []
 drawing = False
@@ -50,7 +50,7 @@ counted_ids_per_line = []
 
 # Frame skipping
 frame_counter = 0
-skip_rate = 1  # process every frame (increase for faster speed)
+skip_rate = 1  # process every frame (increase for speed)
 
 # ========================
 # Helper functions
@@ -81,11 +81,12 @@ def draw_lines(frame):
     for pt1, pt2, _, _ in lines:
         cv2.line(frame, pt1, pt2, (0, 255, 255), 2)
 
-def check_line_crossing(p1, p2, line_p1, line_p2):
-    def side(a,b,c): return (c[0]-a[0])*(b[1]-a[1]) - (c[1]-a[1])*(b[0]-a[0])
-    side1 = side(line_p1, line_p2, p1)
-    side2 = side(line_p1, line_p2, p2)
-    return side1*side2 < 0
+# Segment intersection functions
+def ccw(A, B, C):
+    return (C[1]-A[1])*(B[0]-A[0]) > (B[1]-A[1])*(C[0]-A[0])
+
+def check_segment_intersection(p1, p2, q1, q2):
+    return (ccw(p1, q1, q2) != ccw(p2, q1, q2)) and (ccw(p1, p2, q1) != ccw(p1, p2, q2))
 
 cv2.namedWindow('Video', cv2.WINDOW_NORMAL)
 cv2.setMouseCallback('Video', mouse_callback)
@@ -102,7 +103,7 @@ while True:
     if frame_counter % skip_rate != 0:
         continue
 
-    # Run YOLO with built-in NMS
+    # Run YOLO
     results = model(frame, imgsz=1280, conf=0.5, iou=0.6, device=device, verbose=False)[0]
 
     detections = []
@@ -111,11 +112,8 @@ while True:
         if class_id in vehicle_classes:
             x1, y1, x2, y2 = map(int, box.cpu().numpy())
             w, h = x2 - x1, y2 - y1
-
-            # Skip very small boxes (false duplicates)
-            if w * h < 500:
+            if w*h < 500:  # skip tiny boxes
                 continue
-
             detections.append(([x1, y1, w, h], float(conf.cpu().item()), class_id))
 
     # Update tracker
@@ -140,10 +138,10 @@ while True:
         prev_pos = track_histories.get(track_id, (cx, cy))
         curr_pos = (cx, cy)
 
-        # Count crossings
+        # Count only if movement intersects **visible segment**
         for i, (lp1, lp2, _, _) in enumerate(lines):
             if track_id not in counted_ids_per_line[i]:
-                if check_line_crossing(prev_pos, curr_pos, lp1, lp2):
+                if check_segment_intersection(prev_pos, curr_pos, lp1, lp2):
                     counts_per_line[i] += 1
                     counted_ids_per_line[i].add(track_id)
 
@@ -157,6 +155,7 @@ while True:
             cv2.putText(frame, label, (x1, y1-5),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
 
+    # Draw lines
     draw_lines(frame)
 
     # Draw current line while creating
