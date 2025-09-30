@@ -55,7 +55,7 @@ legs = []            # store all leg names (for matrix display)
 
 # Frame skipping
 frame_counter = 0
-skip_rate = 1  # process every frame (increase for speed)
+skip_rate = 1  # process every 2nd frame (adjust for speed)
 
 # ========================
 # Helper functions
@@ -105,6 +105,15 @@ cv2.namedWindow("Video", cv2.WINDOW_NORMAL)
 cv2.setMouseCallback("Video", mouse_callback)
 
 # ========================
+# Precompute line bounding boxes
+# ========================
+def compute_line_bboxes():
+    return [(min(p1[0], p2[0]), min(p1[1], p2[1]),
+             max(p1[0], p2[0]), max(p1[1], p2[1])) for p1, p2, _, _ in lines]
+
+line_bboxes = compute_line_bboxes()
+
+# ========================
 # Main loop
 # ========================
 while True:
@@ -116,53 +125,53 @@ while True:
     if frame_counter % skip_rate != 0:
         continue
 
-    # Run YOLO
+    # ========================
+    # YOLO detection (optimized)
+    # ========================
     results = model(frame, imgsz=1280, conf=0.5, iou=0.6, device=device, verbose=False)[0]
+    boxes = results.boxes.xyxy.cpu().numpy()
+    cls_ids = results.boxes.cls.cpu().numpy().astype(int)
+    confs = results.boxes.conf.cpu().numpy()
 
     detections = []
-    for box, cls, conf in zip(results.boxes.xyxy, results.boxes.cls, results.boxes.conf):
-        class_id = int(cls)
-        if class_id in vehicle_classes:
-            x1, y1, x2, y2 = map(int, box.cpu().numpy())
-            w, h = x2 - x1, y2 - y1
-            if w * h < 500:
-                continue
-            detections.append(([x1, y1, w, h], float(conf.cpu().item()), class_id))
+    for (x1, y1, x2, y2), cls_id, conf in zip(boxes, cls_ids, confs):
+        if cls_id in vehicle_classes:
+            w, h = int(x2-x1), int(y2-y1)
+            if w*h >= 500:
+                detections.append(([int(x1), int(y1), w, h], float(conf), cls_id))
 
-    # Update tracker
+    # Pass class_id as metadata to DeepSORT
     tracks = tracker.update_tracks(detections, frame=frame)
 
+    # ========================
+    # Update tracks
+    # ========================
     for track in tracks:
         if not track.is_confirmed():
             continue
         track_id = track.track_id
         x1, y1, x2, y2 = map(int, track.to_ltrb())
-        cx, cy = int((x1 + x2) / 2), int((y1 + y2) / 2)
-
-        # Assign class
-        class_id = None
-        for det in detections:
-            dx, dy, dw, dh = det[0]
-            dcx, dcy = dx + dw / 2, dy + dh / 2
-            if abs(dcx - cx) < 20 and abs(dcy - cy) < 20:
-                class_id = det[2]
-                break
+        cx, cy = (x1 + x2)//2, (y1 + y2)//2
+        class_id = getattr(track, "det_class", None)
 
         prev_pos = track_histories.get(track_id, (cx, cy))
         curr_pos = (cx, cy)
 
-        # Check crossing with lines
-        for (lp1, lp2, _, name) in lines:
+        # ========================
+        # Check crossing with lines (optimized)
+        # ========================
+        line_bboxes = compute_line_bboxes()
+        for (lx1, ly1, lx2, ly2), (lp1, lp2, _, name) in zip(line_bboxes, lines):
+            if not (lx1-5 <= cx <= lx2+5 and ly1-5 <= cy <= ly2+5):
+                continue
             if check_segment_intersection(prev_pos, curr_pos, lp1, lp2):
                 if track_id not in vehicle_entry:
-                    vehicle_entry[track_id] = name  # entry
+                    vehicle_entry[track_id] = name
                 else:
                     entry = vehicle_entry[track_id]
                     exit_leg = name
                     if entry != exit_leg:
-                        movement_counts[(entry, exit_leg)] = (
-                            movement_counts.get((entry, exit_leg), 0) + 1
-                        )
+                        movement_counts[(entry, exit_leg)] = movement_counts.get((entry, exit_leg), 0) + 1
                         if entry not in legs:
                             legs.append(entry)
                         if exit_leg not in legs:
@@ -176,10 +185,9 @@ while True:
         cv2.circle(frame, (cx, cy), 3, (0, 0, 255), -1)
         if class_id is not None:
             label = f"{vehicle_class_names[class_id]} #{track_id}"
-            cv2.putText(frame, label, (x1, y1 - 5),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
+            cv2.putText(frame, label, (x1, y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
 
-    # Draw lines
+    # Draw static lines
     draw_lines(frame)
 
     # Draw current line while creating
@@ -187,32 +195,31 @@ while True:
         cv2.circle(frame, current_line[0], 5, (0, 0, 255), -1)
     elif typing_name and len(current_line) == 2:
         cv2.line(frame, current_line[0], current_line[1], (0, 255, 255), 2)
-        cv2.putText(frame, current_name, (mid_point[0] - 40, mid_point[1] - 10),
+        cv2.putText(frame, current_name, (mid_point[0]-40, mid_point[1]-10),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
 
     # ========================
-    # Dynamic OD Matrix Display
+    # Dynamic OD Matrix (every 3 frames)
     # ========================
-    if legs:
+    if legs and frame_counter % 3 == 0:
         sorted_legs = sorted(legs)
         start_x, start_y = 30, 50
         cell_w, cell_h = 80, 30
 
-        # Draw header row
-        cv2.putText(frame, "OD Matrix", (start_x, start_y - 20),
+        # Header
+        cv2.putText(frame, "OD Matrix", (start_x, start_y-20),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 200, 255), 2)
         for j, exit_leg in enumerate(sorted_legs):
-            cv2.putText(frame, str(exit_leg),
-                        (start_x + (j + 1) * cell_w, start_y),
+            cv2.putText(frame, str(exit_leg), (start_x + (j+1)*cell_w, start_y),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
 
-        # Draw rows
+        # Rows
         for i, entry_leg in enumerate(sorted_legs):
-            y = start_y + (i + 1) * cell_h
+            y = start_y + (i+1)*cell_h
             cv2.putText(frame, str(entry_leg), (start_x, y),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
             for j, exit_leg in enumerate(sorted_legs):
-                x = start_x + (j + 1) * cell_w
+                x = start_x + (j+1)*cell_w
                 count = movement_counts.get((entry_leg, exit_leg), 0)
                 cv2.putText(frame, str(count), (x, y),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
@@ -220,6 +227,9 @@ while True:
     cv2.imshow("Video", frame)
     key = cv2.waitKey(1) & 0xFF
 
+    # ========================
+    # Line naming input
+    # ========================
     if typing_name:
         if key == 13:  # Enter
             direction = get_line_direction(current_line[0], current_line[1])
@@ -235,7 +245,6 @@ while True:
         elif 32 <= key <= 126:
             current_name += chr(key)
 
-    
     if key == ord("q"):
         break
 
